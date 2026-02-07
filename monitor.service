@@ -1,0 +1,19 @@
+#  cat /etc/systemd/system/bas-monitoring.service
+[Unit]
+Description=BAS Monitoring Python Server
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/bas_monitoring
+Environment=PATH=/usr/bin:/usr/local/bin
+ExecStart=/usr/bin/python3 /root/bas_monitoring/server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
