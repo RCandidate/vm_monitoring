@@ -1,4 +1,4 @@
-﻿<!-- dashboard.html v.3.4-->
+<!-- dashboard.html v.3.6-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,9 +6,7 @@
     <title>Mega VM Monitoring Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-
-<link rel="shortcut icon" href="/favicon.ico">
-
+    <link rel="shortcut icon" href="/favicon.ico">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -35,7 +33,7 @@
             border: 1px solid rgba(148, 0, 211, 0.1);
         }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: top; }
         th { background-color: rgba(148, 0, 211, 0.1); color: #6a0dad; }
         h1, h2 { color: #6a0dad; }
         h1 { margin-top: 0; display: flex; justify-content: space-between; align-items: center; }
@@ -59,6 +57,15 @@
             border: 1px solid #f9a8d4;
         }
         .warning-table h2 { color: #881337; }
+
+        /* Стили для нового столбца разбивки */
+        .active-row {
+            color: #6a0dad; /* Яркий фиолетовый */
+            font-weight: 500;
+        }
+        .fail-row {
+            color: #aaaaaa; /* Светло-серый */
+        }
     </style>
 </head>
 <body>
@@ -72,24 +79,36 @@
     </h1>
 
     <div class="chart-container">
-        <h2>CPU Load (%) over Time</h2>
+        <h2>CPU Load (%)</h2>
         <canvas id="cpuChart"></canvas>
     </div>
 
     <div class="chart-container">
-        <h2>Free Disk Space (GB) over Time</h2>
+        <h2>Free Disk Space (GB)</h2>
         <canvas id="diskChart"></canvas>
     </div>
 
     <div class="table-container">
-        <h2>VM Groups – Total Threads</h2>
+        <h2>VM Profiles – Total Threads</h2>
         <table>
             <thead>
-                <tr><th>VM Group</th><th>Total Threads</th></tr>
+                <tr>
+                    <th>VM Group</th>
+                    <th>Total Threads</th>
+                    <th>Breakdown by Software</th>
+                </tr>
             </thead>
             <tbody>
                 {% for row in group_rows %}
-                <tr><td>{{ row.group }}</td><td>{{ row.threads }}</td></tr>
+                <tr>
+                    <td>{{ row.group }}</td>
+                    <td>{{ row.threads }}</td>
+                    <td>
+                        {% for item in row.breakdown %}
+                            <div class="{{ item.class }}">{{ item.text }}</div>
+                        {% endfor %}
+                    </td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -140,32 +159,44 @@ function interpolateColor(color1, color2, factor) {
 }
 
 function getProfileColor(groupName, vmIndex, vmCount) {
-    if (groupName === 'Cyber') {
-        return '#9400D3';
+    // ИСПРАВЛЕНИЕ: используем trim() для надежного сравнения
+    const cleanName = groupName.trim();
+    
+    // Нормализуем фактор.
+    // Если vmCount=1 -> factor = 0 (яркий цвет).
+    // Если vmCount > 1 -> плавный уход от 0.0 до 0.8 (не полностью серый, чтобы читать)
+    const factor = vmCount > 1 ? vmIndex / vmCount : 0;
+
+    if (cleanName === 'Cyber') {
+        const purpleStart = '#9400D3'; 
+        const purpleEnd   = '#4B0082'; 
+        return interpolateColor(purpleStart, purpleEnd, factor);
     }
 
+    // Для не-Cyber
     const baseColors = [
         '#FF4500', '#1E90FF', '#32CD32', '#FFD700', '#FF1493',
-        '#00CED1', '#FF8C00', '#8A2BE2', '#DC143C', '#228B22'
+        '#00CED1', '#FF8C00', '#DC143C', '#228B22', '#20B2AA'
     ];
 
     let groupHash = 0;
-    for (let i = 0; i < groupName.length; i++) {
-        groupHash = groupName.charCodeAt(i) + ((groupHash << 5) - groupHash);
+    for (let i = 0; i < cleanName.length; i++) {
+        groupHash = cleanName.charCodeAt(i) + ((groupHash << 5) - groupHash);
     }
     const colorIndex = Math.abs(groupHash) % baseColors.length;
     const baseColor = baseColors[colorIndex];
 
-    const step = Math.min(vmIndex, 9) / 9;
-    const grayColor = '#D3D3D3';
-
-    return interpolateColor(baseColor, grayColor, step);
+    const grayColor = '#444444';
+    // Интерполируем от базового к серому.
+    // При factor = 0.5 (середина группы) цвет будет еще вполне читаем.
+    return interpolateColor(baseColor, grayColor, factor);
 }
 
 // === Подготовка данных ===
 const vmData = {{ vms_by_group | tojson }};
 const groupOrder = {{ group_order | tojson }};
 const vmVersions = {{ vm_versions | tojson }};
+const nowMoscow = new Date('{{ now_moscow }}');
 
 const cpuDatasets = [];
 const diskDatasets = [];
@@ -178,6 +209,17 @@ groupOrder.forEach((group) => {
         const color = getProfileColor(group, vmIndex, vmCount);
         const versions = vmVersions[vm] || { bas_version: 'N/A', project_version: 'N/A' };
 
+        const cpuDataWithThreads = vmData[group][vm]['cpu'].map((point, idx) => {
+            const threads = vmData[group][vm]['threads'][idx] 
+                ? vmData[group][vm]['threads'][idx].y 
+                : 0;
+            return {
+                x: point.x,
+                y: point.y,
+                threads: threads
+            };
+        });
+
         const datasetBase = {
             label: vm + ' (' + group + ')',
             borderColor: color,
@@ -185,14 +227,13 @@ groupOrder.forEach((group) => {
             tension: 0.2,
             bas_version: versions.bas_version,
             project_version: versions.project_version,
-            // --- ИЗМЕНЕНИЕ 1: Делаем точки более заметными и "кликабельными" ---
             pointRadius: 3,
             pointHoverRadius: 6,
         };
 
         cpuDatasets.push({
             ...datasetBase,
-            data: vmData[group][vm]['cpu'],
+            data: cpuDataWithThreads,
         });
 
         const diskData = vmData[group][vm]['disk'].map(point => ({
@@ -207,7 +248,7 @@ groupOrder.forEach((group) => {
     });
 });
 
-// --- ИЗМЕНЕНИЕ 2: Настройки tooltip для одной точки ---
+// --- Tooltip ---
 const pointTooltipOptions = {
     mode: 'point',
     intersect: true,
@@ -219,11 +260,16 @@ const pointTooltipOptions = {
             const profiles = labelParts.length > 1 ? labelParts[1].slice(0, -1) : 'N/A';
 
             let valueLine = '';
+            let threadsLine = '';
+            
             if (context.parsed.y !== null) {
                 if (context.chart.canvas.id === 'diskChart') {
                     valueLine = `${vmId}: ${context.parsed.y.toFixed(2)} GB`;
                 } else {
                     valueLine = `${vmId}: ${context.parsed.y.toFixed(2)}%`;
+                    if (context.raw.threads !== undefined) {
+                        threadsLine = `Threads: ${context.raw.threads}`;
+                    }
                 }
             }
 
@@ -232,15 +278,27 @@ const pointTooltipOptions = {
 
             return [
                 valueLine,
+                threadsLine,
                 `BAS ver: ${basVersion}`,
                 `Project ver: ${projectVersion}`,
                 `Profiles: ${profiles}`
-            ];
+            ].filter(line => line.length > 0);
         }
     }
 };
 
-// --- ИЗМЕНЕНИЕ 3: Общие опции для графиков ---
+// --- Опции графиков ---
+const timeRangeHours = {
+    '1h': 1,
+    '6h': 6,
+    '12h': 12
+};
+const currentRange = '{{ current_time_range }}';
+const hoursBack = timeRangeHours[currentRange] || 1;
+
+const minTimeDate = new Date(nowMoscow);
+minTimeDate.setHours(minTimeDate.getHours() - hoursBack);
+
 const commonChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -253,7 +311,9 @@ const commonChartOptions = {
             type: 'time',
             time: { unit: 'minute', tooltipFormat: 'MMM d, HH:mm', displayFormats: { minute: 'HH:mm' } },
             title: { display: true, text: 'Time (Moscow)' },
-            timezone: 'Europe/Moscow'
+            timezone: 'Europe/Moscow',
+            min: minTimeDate.toISOString(),
+            max: nowMoscow.toISOString()
         }
     },
     plugins: {
