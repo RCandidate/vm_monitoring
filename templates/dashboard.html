@@ -1,0 +1,682 @@
+<!-- dashboard.html v.4.2 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mega VM Monitoring Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link rel="shortcut icon" href="/favicon.ico">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #ffffff;
+            color: #333;
+        }
+        .chart-container {
+            width: 98%;
+            height: 400px;
+            margin-bottom: 30px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(148, 0, 211, 0.2);
+            border: 1px solid rgba(148, 0, 211, 0.1);
+
+            /* --- FIX 1: Добавляем Flexbox, чтобы график растягивался по высоте --- */
+            display: flex;
+            flex-direction: column;
+        }
+        /* --- FIX 1: Заголовок не должен растягиваться, график должен --- */
+        .chart-container h2 {
+            flex: 0 0 auto;
+            margin-top: 0;
+        }
+        
+        .table-container {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(148, 0, 211, 0.2);
+            margin-bottom: 30px;
+            border: 1px solid rgba(148, 0, 211, 0.1);
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: top; }
+        th { background-color: rgba(148, 0, 211, 0.1); color: #6a0dad; }
+        h1, h2 { color: #6a0dad; }
+        h1 { margin-top: 0; display: flex; justify-content: space-between; align-items: center; }
+        .time-selector { margin-left: auto; display: flex; }
+        .time-button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            background-color: #f8f9fa;
+            border: 1px solid #6a0dad;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #6a0dad;
+        }
+        .time-button.active {
+            background-color: #6a0dad;
+            color: white;
+            border-color: #6a0dad;
+        }
+        .warning-table {
+            background-color: #fdf2f8;
+            border: 1px solid #f9a8d4;
+        }
+        .warning-table h2 { color: #881337; }
+
+        .active-row { color: #6a0dad; font-weight: 500; }
+        .fail-row { color: #aaaaaa; }
+
+/* Класс для обёртки Uptime, чтобы растянуть график по высоте --- */
+.chart-flex-wrapper {
+    position: relative;
+    flex-grow: 1; /* Растягиваемся на всю оставшуюся высоту */
+    width: 100%;
+}
+    </style>
+</head>
+<body>
+    <h1>
+        Mega VM Monitoring Dashboard
+        <div class="time-selector">
+            <button class="time-button {% if current_time_range == '1h' %}active{% endif %}" onclick="changeTimeRange('1h')">1 час</button>
+            <button class="time-button {% if current_time_range == '6h' %}active{% endif %}" onclick="changeTimeRange('6h')">6 часов</button>
+            <button class="time-button {% if current_time_range == '12h' %}active{% endif %}" onclick="changeTimeRange('12h')">12 часов</button>
+        </div>
+    </h1>
+
+    <div class="chart-container">
+        <h2>CPU Load (%)</h2>
+        <canvas id="cpuChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>Free Disk Space (GB)</h2>
+        <canvas id="diskChart"></canvas>
+    </div>
+
+    <!-- Uptime Chart -->
+    <div class="chart-container">
+        <h2>Uptime by VM (hours, logarithmic scale)</h2>
+        <canvas id="uptimeChart"></canvas>
+    </div>
+
+    <div class="table-container">
+        <h2>VM Profiles – Total Threads</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>VM Group</th>
+                    <th>Total Threads</th>
+                    <th>Breakdown by Project Ver.</th>
+                    <th>Breakdown by BAS Ver.</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in group_rows %}
+                <tr>
+                    <td>{{ row.group }}</td>
+                    <td>{{ row.threads }}</td>
+                    <td>
+                        {% for item in row.breakdown_project %}
+                            <div class="{{ item.class }}">{{ item.text }}</div>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% for item in row.breakdown_bas %}
+                            <div class="{{ item.class }}">{{ item.text }}</div>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if low_cpu_vms %}
+    <div class="table-container warning-table">
+        <h2>Внимание! Потенциальный сбой ПО</h2>
+        <table>
+            <thead>
+                <tr><th>Виртуальная машина</th><th>Группа</th><th>Средняя загрузка CPU (%)</th></tr>
+            </thead>
+            <tbody>
+                {% for vm in low_cpu_vms %}
+                <tr>
+                    <td>{{ vm.vm_id }}</td>
+                    <td>{{ vm.vm_group }}</td>
+                    <td>{{ "%.2f"|format(vm.avg_cpu) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+<script>
+// === Функция для изменения временного диапазона ===
+function changeTimeRange(timeRange) {
+    window.location.href = '/dashboard?time_range=' + timeRange;
+}
+
+// === Вспомогательные функции для цветов ===
+function interpolateColor(color1, color2, factor) {
+    const hex = (c) => c.toString(16).padStart(2, '0');
+    const r1 = parseInt(color1.slice(1, 3), 16);
+    const g1 = parseInt(color1.slice(3, 5), 16);
+    const b1 = parseInt(color1.slice(5, 7), 16);
+    const r2 = parseInt(color2.slice(1, 3), 16);
+    const g2 = parseInt(color2.slice(3, 5), 16);
+    const b2 = parseInt(color2.slice(5, 7), 16);
+
+    const r = Math.round(r1 + factor * (r2 - r1));
+    const g = Math.round(g1 + factor * (g2 - g1));
+    const b = Math.round(b1 + factor * (b2 - b1));
+
+    return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
+
+function getProfileColor(groupName, vmIndex, vmCount) {
+    const cleanName = groupName.trim();
+    const factor = vmCount > 1 ? vmIndex / vmCount : 0;
+
+    if (cleanName === 'Cyber') {
+        const purpleStart = '#9400D3';
+        const purpleEnd   = '#4B0082';
+        return interpolateColor(purpleStart, purpleEnd, factor);
+    }
+
+    const baseColors = [
+        '#FF4500', '#1E90FF', '#32CD32', '#FFD700', '#FF1493',
+        '#00CED1', '#FF8C00', '#DC143C', '#228B22', '#20B2AA'
+    ];
+
+    let groupHash = 0;
+    for (let i = 0; i < cleanName.length; i++) {
+        groupHash = cleanName.charCodeAt(i) + ((groupHash << 5) - groupHash);
+    }
+    const colorIndex = Math.abs(groupHash) % baseColors.length;
+    const baseColor = baseColors[colorIndex];
+
+    const grayColor = '#444444';
+    return interpolateColor(baseColor, grayColor, factor);
+}
+
+// 🆕 Функция для плавного градиента uptime (0-64+ часов)
+function getUptimeColorSmooth(hours) {
+    const keyPoints = [
+        { hours: 0,  color: '#000000' },
+        { hours: 1,  color: '#FF0000' },
+        { hours: 2,  color: '#FFA500' },
+        { hours: 4,  color: '#00FF00' },
+        { hours: 8,  color: '#00FFFF' },
+        { hours: 16, color: '#0000FF' },
+        { hours: 32, color: '#800080' },
+        { hours: 64, color: '#FFFFFF' }
+    ];
+
+    if (hours >= 64) return '#FFFFFF';
+    if (hours <= 0) return '#000000';
+
+    for (let i = 0; i < keyPoints.length - 1; i++) {
+        const p1 = keyPoints[i];
+        const p2 = keyPoints[i + 1];
+        if (hours >= p1.hours && hours <= p2.hours) {
+            const factor = (hours - p1.hours) / (p2.hours - p1.hours);
+            return interpolateColor(p1.color, p2.color, factor);
+        }
+    }
+    return '#FFFFFF';
+}
+
+// === Подготовка данных ===
+const vmData = {{ vms_by_group | tojson }};
+const groupOrder = {{ group_order | tojson }};
+const vmVersions = {{ vm_versions | tojson }};
+const uptimeData = {{ uptime_data | tojson }};
+const nowMoscow = new Date('{{ now_moscow }}');
+
+const cpuDatasets = [];
+const diskDatasets = [];
+
+// --- FIX 2: Переменная для поиска минимального значения на диске ---
+let globalMinDiskGb = Infinity;
+
+groupOrder.forEach((group) => {
+    const vmsInGroup = Object.keys(vmData[group]);
+    const vmCount = vmsInGroup.length;
+
+    vmsInGroup.forEach((vm, vmIndex) => {
+        const color = getProfileColor(group, vmIndex, vmCount);
+        const versions = vmVersions[vm] || { bas_version: 'N/A', project_version: 'N/A' };
+
+        const cpuDataWithThreads = vmData[group][vm]['cpu'].map((point, idx) => {
+            const threads = vmData[group][vm]['threads'][idx]
+                ? vmData[group][vm]['threads'][idx].y
+                : 0;
+            return {
+                x: point.x,
+                y: point.y,
+                threads: threads
+            };
+        });
+
+        const datasetBase = {
+            label: vm + ' (' + group + ')',
+            borderColor: color,
+            backgroundColor: 'rgba(0,0,0,0)',
+            tension: 0.2,
+            bas_version: versions.bas_version,
+            project_version: versions.project_version,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+        };
+
+        cpuDatasets.push({
+            ...datasetBase,
+            data: cpuDataWithThreads,
+        });
+
+        // --- FIX 2: Логика обработки HDD данных ---
+        const diskData = vmData[group][vm]['disk'].map(point => {
+            // Переводим в ГБ
+            let valGb = point.y / (1024 * 1024 * 1024);
+            
+            // Условие: всё что > 60 ГБ приравниваем к 60 ГБ
+            if (valGb > 60) {
+                valGb = 60;
+            }
+
+            // Ищем минимум для оси Y
+            if (valGb < globalMinDiskGb) {
+                globalMinDiskGb = valGb;
+            }
+
+            return {
+                x: point.x,
+                y: valGb
+            };
+        });
+
+        diskDatasets.push({
+            ...datasetBase,
+            data: diskData,
+        });
+    });
+});
+
+// --- FIX 2: Вычисление нижней границы оси Y для HDD ---
+// Если данных не было, ставим 0
+if (globalMinDiskGb === Infinity) globalMinDiskGb = 0;
+// Округляем вниз с шагом 5 (12 -> 10, 9 -> 5, 3 -> 0)
+let diskYAxisMin = Math.floor(globalMinDiskGb / 5) * 5;
+// Защита от отрицательных значений, если вдруг меньше 0
+if (diskYAxisMin < 0) diskYAxisMin = 0;
+
+
+// === Подготовка данных для uptime-графика ===
+const uptimeLabels = [];
+const uptimeValues = [];
+const uptimeColors = [];
+const uptimeTooltips = [];
+
+const allVMs = new Set();
+groupOrder.forEach(group => {
+    Object.keys(vmData[group]).forEach(vm => allVMs.add(vm));
+});
+
+Array.from(allVMs).sort().forEach(vm => {
+    const seconds = uptimeData[vm] || 0;
+    const hours = (seconds / 3600).toFixed(2);
+    const hoursFloat = parseFloat(hours);
+
+    uptimeLabels.push(vm);
+    uptimeValues.push(hoursFloat);
+    uptimeColors.push(getUptimeColorSmooth(hoursFloat));
+
+    const days = Math.floor(hoursFloat / 24);
+    const hrs = (hoursFloat % 24).toFixed(1);
+    let timeStr = '';
+    if (days > 0) {
+        timeStr = `${days}д ${hrs}ч`;
+    } else {
+        timeStr = `${hoursFloat.toFixed(1)}ч`;
+    }
+    uptimeTooltips.push(`⏱ ${timeStr} без перезагрузки`);
+});
+
+// === Tooltip для линейных графиков ===
+const pointTooltipOptions = {
+    mode: 'point',
+    intersect: true,
+    callbacks: {
+        label: function(context) {
+            const fullLabel = context.dataset.label || '';
+            const labelParts = fullLabel.split(' (');
+            const vmId = labelParts[0];
+            const profiles = labelParts.length > 1 ? labelParts[1].slice(0, -1) : 'N/A';
+
+            let valueLine = '';
+            let threadsLine = '';
+
+            if (context.parsed.y !== null) {
+                if (context.chart.canvas.id === 'diskChart') {
+                    valueLine = `${vmId}: ${context.parsed.y.toFixed(2)} GB`;
+                } else {
+                    valueLine = `${vmId}: ${context.parsed.y.toFixed(2)}%`;
+                    if (context.raw.threads !== undefined) {
+                        threadsLine = `Threads: ${context.raw.threads}`;
+                    }
+                }
+            }
+
+            const basVersion = context.dataset.bas_version || 'N/A';
+            const projectVersion = context.dataset.project_version || 'N/A';
+
+            return [
+                valueLine,
+                threadsLine,
+                `BAS ver: ${basVersion}`,
+                `Project ver: ${projectVersion}`,
+                `Profiles: ${profiles}`
+            ].filter(line => line.length > 0);
+        }
+    }
+};
+
+// === Опции графиков ===
+const timeRangeHours = {
+    '1h': 1,
+    '6h': 6,
+    '12h': 12
+};
+const currentRange = '{{ current_time_range }}';
+const hoursBack = timeRangeHours[currentRange] || 1;
+
+const minTimeDate = new Date(nowMoscow);
+minTimeDate.setHours(minTimeDate.getHours() - hoursBack);
+
+const commonChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+        mode: 'point',
+        intersect: true,
+    },
+    scales: {
+        x: {
+            type: 'time',
+            time: { unit: 'minute', tooltipFormat: 'MMM d, HH:mm', displayFormats: { minute: 'HH:mm' } },
+            title: { display: true, text: 'Time (Moscow)' },
+            timezone: 'Europe/Moscow',
+            min: minTimeDate.toISOString(),
+            max: nowMoscow.toISOString()
+        }
+    },
+    plugins: {
+        legend: { position: 'top' },
+        tooltip: pointTooltipOptions
+    }
+};
+
+// === CPU Chart ===
+const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+new Chart(cpuCtx, {
+    type: 'line',
+    data: { datasets: cpuDatasets },
+    options: {
+        ...commonChartOptions,
+        scales: {
+            ...commonChartOptions.scales,
+            y: { min: 0, max: 100, title: { display: true, text: 'CPU %' } }
+        }
+    }
+});
+
+// === Disk Chart ===
+const diskCtx = document.getElementById('diskChart').getContext('2d');
+new Chart(diskCtx, {
+    type: 'line',
+    data: { datasets: diskDatasets },
+    options: {
+        ...commonChartOptions,
+        scales: {
+            ...commonChartOptions.scales,
+            y: {
+                // --- FIX 2: Применяем динамические границы ---
+                min: diskYAxisMin,
+                max: 60, 
+                title: { display: true, text: 'Free Disk (GB)' },
+                ticks: { stepSize: 5, callback: function(value) { return value + ' GB'; } }
+            }
+        }
+    }
+});
+
+
+
+
+// === Uptime Chart (Bar, logarithmic scale) ===
+
+const goldenBars = new Map();
+uptimeValues.forEach((hours, i) => {
+    if (hours >= 64) {
+        goldenBars.set(i, 0.5 + Math.random() * 1.3);
+    }
+});
+
+const uptimeGradientPlugin = {
+    id: 'uptimeGradient',
+    beforeDatasetsDraw(chart) {
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+
+        const meta = chart.getDatasetMeta(0);
+        for (let i = 0; i < meta.data.length; i++) {
+            if (goldenBars.has(i)) continue;
+
+            const bar = meta.data[i];
+            const baseColor = uptimeColors[i];
+            const whitishColor = interpolateColor(baseColor, '#FFFFFF', 0.75);
+            const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+            gradient.addColorStop(0, baseColor);
+            gradient.addColorStop(1, whitishColor);
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(bar.x - bar.width / 2, bar.y, bar.width, bar.base - bar.y);
+        }
+    }
+};
+
+const uptimeCanvas = document.getElementById('uptimeChart');
+const uptimeCtx = uptimeCanvas.getContext('2d');
+
+// --- FIX 1: Правильная обёртка для графика Uptime ---
+const wrapper = document.createElement('div');
+wrapper.className = 'uptime-wrapper'; // Добавляем класс для CSS
+//wrapper.style.position = 'relative';
+wrapper.className = 'chart-flex-wrapper';
+// Удаляем display: inline-block, который ломал размер.
+// Благодаря CSS .chart-container { display: flex; } и flex-grow: 1 у wrapper'а, график займёт всё место.
+uptimeCanvas.parentNode.insertBefore(wrapper, uptimeCanvas);
+wrapper.appendChild(uptimeCanvas);
+
+const uptimeTooltipEl = document.createElement('div');
+uptimeTooltipEl.id = 'uptimeTooltip';
+uptimeTooltipEl.style.cssText = [
+    'position: absolute',
+    'background: rgba(0,0,0,0.85)',
+    'color: #fff',
+    'padding: 8px 12px',
+    'border-radius: 6px',
+    'font-size: 13px',
+    'font-family: Arial, sans-serif',
+    'pointer-events: none',
+    'z-index: 10',
+    'opacity: 0',
+    'transition: opacity 0.15s',
+    'white-space: nowrap'
+].join(';');
+wrapper.appendChild(uptimeTooltipEl);
+
+const overlayCanvas = document.createElement('canvas');
+overlayCanvas.style.position = 'absolute';
+overlayCanvas.style.top = '0';
+overlayCanvas.style.left = '0';
+overlayCanvas.style.pointerEvents = 'none';
+overlayCanvas.style.zIndex = '1';
+wrapper.appendChild(overlayCanvas);
+
+function syncOverlaySize() {
+    // Получаем реальный размер, который занял canvas благодаря Flexbox
+    const rect = uptimeCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    
+    // Устанавливаем внутренние размеры overlay с учетом DPI
+    overlayCanvas.width = uptimeCanvas.width;
+    overlayCanvas.height = uptimeCanvas.height;
+    
+    // Устанавливаем CSS размеры, чтобы совпадали с canvas
+    overlayCanvas.style.width = uptimeCanvas.style.width;
+    overlayCanvas.style.height = uptimeCanvas.style.height;
+}
+syncOverlaySize();
+
+const resizeObserver = new ResizeObserver(syncOverlaySize);
+resizeObserver.observe(uptimeCanvas);
+
+if (window._uptimeChartInstance) window._uptimeChartInstance.destroy();
+
+window._uptimeChartInstance = new Chart(uptimeCtx, {
+    type: 'bar',
+    data: {
+        labels: uptimeLabels,
+        datasets: [{
+            label: 'Uptime (hours)',
+            data: uptimeValues,
+            backgroundColor: 'transparent',
+            borderColor: '#555555',
+            borderWidth: 1
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'x',
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                enabled: false,
+                external: function(context) {
+                    const tooltipModel = context.tooltip;
+                    if (tooltipModel.opacity === 0) {
+                        uptimeTooltipEl.style.opacity = '0';
+                        return;
+                    }
+
+                    let html = '';
+                    if (tooltipModel.title && tooltipModel.title.length) {
+                        html += '<strong>' + tooltipModel.title[0] + '</strong>';
+                    }
+                    if (tooltipModel.body && tooltipModel.body.length) {
+                        const lines = tooltipModel.body.map(b => b.lines.join(''));
+                        if (html) html += '<br>';
+                        html += lines.join('');
+                    }
+                    uptimeTooltipEl.innerHTML = html;
+                    uptimeTooltipEl.style.opacity = '1';
+
+                    uptimeTooltipEl.style.left = tooltipModel.caretX + 'px';
+                    uptimeTooltipEl.style.top  = (tooltipModel.caretY - 10) + 'px';
+                    uptimeTooltipEl.style.transform = 'translate(-50%, -100%)';
+                }
+            }
+        },
+        scales: {
+            y: {
+                type: 'logarithmic',
+                min: 0.01,
+                max: 64,
+                title: { display: true, text: 'Hours (log scale)' },
+                ticks: {
+                    callback: function(value) {
+                        if (value >= 64) return '64+';
+                        if (value >= 32) return '32';
+                        if (value >= 16) return '16';
+                        if (value >= 8) return '8';
+                        if (value >= 4) return '4';
+                        if (value >= 2) return '2';
+                        if (value >= 1) return '1';
+                        if (value >= 0.1) return value.toFixed(1);
+                        return '';
+                    }
+                }
+            },
+            x: {
+                title: { display: true, text: 'Virtual Machine' },
+                ticks: { maxRotation: 45, minRotation: 45 }
+            }
+        }
+    },
+    plugins: [uptimeGradientPlugin]
+});
+
+const baseAnimSpeed = 0.003;
+const maxGradientShift = 150;
+let animTime = 0;
+
+function animateGoldenShimmer() {
+    if (goldenBars.size === 0) return;
+
+    animTime += baseAnimSpeed;
+
+    const dpr = window.devicePixelRatio || 1;
+    const overlayCtx = overlayCanvas.getContext('2d');
+
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const chartArea = window._uptimeChartInstance.chartArea;
+    if (!chartArea) {
+        setTimeout(() => requestAnimationFrame(animateGoldenShimmer), 50);
+        return;
+    }
+
+    const meta = window._uptimeChartInstance.getDatasetMeta(0);
+
+    goldenBars.forEach((speedMultiplier, i) => {
+        const bar = meta.data[i];
+        if (!bar) return;
+
+        const offset = Math.sin(animTime * speedMultiplier) * maxGradientShift;
+
+        const gradient = overlayCtx.createLinearGradient(
+            chartArea.left - chartArea.bottom + offset, chartArea.bottom,
+            chartArea.left + offset, chartArea.top
+        );
+        gradient.addColorStop(0,   '#B8860B');
+        gradient.addColorStop(0.2, '#FFD700');
+        gradient.addColorStop(0.4, '#FFFACD');
+        gradient.addColorStop(0.6, '#DAA520');
+        gradient.addColorStop(0.8, '#FFD700');
+        gradient.addColorStop(1,   '#B8860B');
+
+        overlayCtx.fillStyle = gradient;
+        overlayCtx.fillRect(
+            bar.x - bar.width / 2, bar.y,
+            bar.width, bar.base - bar.y
+        );
+    });
+
+    setTimeout(() => requestAnimationFrame(animateGoldenShimmer), 50);
+}
+
+animateGoldenShimmer();
+</script>
+</body>
+</html>
