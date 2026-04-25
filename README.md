@@ -39,40 +39,41 @@ Backend Integration:
   - Timezone: Europe/Moscow 🇷🇺
 ```
 
-##🚀 Quick Start
+## 🚀 Quick Start
 Prerequisites
 Python 3.8+
 A sense of wonder ✨
 
-##**Installation**
+## **Installation**
 
-# Clone the repository
+### Clone the repository
 git clone https://github.com/RCandidate/vm_monitoring.git
 cd vm_monitoring
 
-# Install dependencies
+### Install dependencies
 pip install -r requirements.txt
 
-# Configure your VM monitoring agents
-cp .env.example .env
-# Edit .env with your configuration
+### Configure your VM monitoring agents
 
-# Launch the dashboard
-python app.py
+### Edit .env with your configuration
+
+### Launch the dashboard
+python server.py
 Visit http://localhost:5000/dashboard and prepare to be amazed.
+nginx as a reverse proxy is recommended for production.
 
-##🎯 How It Works
+## 🎯 How It Works
 Color Magic
 - Cyber group: Purple gradient from #9400D3 to #4B0082
 - Other groups: Distinct colors based on group name hash
 - Multi-VM groups: Smooth color interpolation across VMs
 
-##Uptime Rainbow 🌈
+## Uptime Rainbow 🌈
 
 Hours 0-64+ → #000000 → #FF0000 → #FFA500 → #00FF00 → #00FFFF → #0000FF → #800080 → #FFFFFF
 Yes, that's a full rainbow transition. Because uptime deserves celebration.
 
-##Smart Scaling
+## Smart Scaling
 - Disk space >60GB displays as 60GB (cleaner visualization)
 - Y-axis minimum automatically adjusts to your actual free space
 - Logarithmic scale for uptime (0.01 to 64+ hours)
@@ -85,29 +86,25 @@ The dashboard automatically highlights VMs with suspiciously low CPU load (<0.5%
 v4.3. (Current)  # Security update (.env), agent + nginx configs, project cleanup
 v3.0.            # Initial dashboard with basic charts
 
-##🤝 Contributing
+## 🤝 Contributing
 Found a bug? Have an idea for an even cooler gradient? Open an issue or submit a PR!
 
-Fork the repository
+- Fork the repository
+- Create your feature branch (git checkout -b feature/amazing-gradient)
+- Commit your changes (git commit -m 'Add more purple')
+- Push to the branch (git push origin feature/amazing-gradient)
+- Open a Pull Request
 
-Create your feature branch (git checkout -b feature/amazing-gradient)
-
-Commit your changes (git commit -m 'Add more purple')
-
-Push to the branch (git push origin feature/amazing-gradient)
-
-Open a Pull Request
-
-##🐛 Known Issues
+## 🐛 Known Issues
 - Golden shimmer effect may cause spontaneous dancing in your peripheral vision
 - May induce desire to reach 64+ hours uptime just to see the animation
 
-##📝 License
+##  📝 License
 MIT — go wild, just keep the purple theme intact.
 
-##🙏 Acknowledgments
+## 🙏 Acknowledgments
 - Chart.js team for making graphs beautiful
 - The color purple for being majestic
 - Coffee ☕
 
-###Built with 💜 and an unreasonable amount of CSS gradients
+### Built with 💜 and an unreasonable amount of CSS gradients
