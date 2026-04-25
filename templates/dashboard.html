@@ -1,4 +1,4 @@
-<!-- dashboard.html v.4.2 -->
+<!-- dashboard.html v.4.3 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -76,6 +76,7 @@
     position: relative;
     flex-grow: 1; /* Растягиваемся на всю оставшуюся высоту */
     width: 100%;
+ min-height: 0;
 }
     </style>
 </head>
@@ -335,9 +336,13 @@ Array.from(allVMs).sort().forEach(vm => {
     const hoursFloat = parseFloat(hours);
 
     uptimeLabels.push(vm);
-    uptimeValues.push(hoursFloat);
-    uptimeColors.push(getUptimeColorSmooth(hoursFloat));
+    
+    // --- FIX 1: Ограничиваем визуальное значение 64 часами ---
+    const clampedHours = Math.min(hoursFloat, 64);
+    uptimeValues.push(clampedHours);
+    uptimeColors.push(getUptimeColorSmooth(clampedHours));
 
+    // Для тултипа используем hoursFloat, чтобы показать реальное время
     const days = Math.floor(hoursFloat / 24);
     const hrs = (hoursFloat % 24).toFixed(1);
     let timeStr = '';
@@ -348,6 +353,10 @@ Array.from(allVMs).sort().forEach(vm => {
     }
     uptimeTooltips.push(`⏱ ${timeStr} без перезагрузки`);
 });
+
+
+
+
 
 // === Tooltip для линейных графиков ===
 const pointTooltipOptions = {
@@ -566,6 +575,7 @@ window._uptimeChartInstance = new Chart(uptimeCtx, {
     options: {
         responsive: true,
         maintainAspectRatio: false,
+ clip: true,
         indexAxis: 'x',
         plugins: {
             legend: { display: false },
@@ -629,6 +639,7 @@ const baseAnimSpeed = 0.003;
 const maxGradientShift = 150;
 let animTime = 0;
 
+
 function animateGoldenShimmer() {
     if (goldenBars.size === 0) return;
 
@@ -653,24 +664,30 @@ function animateGoldenShimmer() {
         const bar = meta.data[i];
         if (!bar) return;
 
-        const offset = Math.sin(animTime * speedMultiplier) * maxGradientShift;
+        const barX = bar.x - bar.width / 2;
+        const barY = bar.y;
+        const barW = bar.width;
+        const barH = bar.base - bar.y;
+
+        // --- FIX: Привязываем градиент к размерам самого столбца ---
+        // Размах мерцания зависит от толщины столбца, чтобы блик не "потерялся"
+        const span = Math.max(barW * 2, 40); 
+        const offsetShift = Math.sin(animTime * speedMultiplier) * span;
 
         const gradient = overlayCtx.createLinearGradient(
-            chartArea.left - chartArea.bottom + offset, chartArea.bottom,
-            chartArea.left + offset, chartArea.top
+            barX - span + offsetShift, bar.base,
+            barX + span + offsetShift, barY
         );
+        
+        // Располагаем цвета плотнее, чтобы блик был отчетливым
         gradient.addColorStop(0,   '#B8860B');
-        gradient.addColorStop(0.2, '#FFD700');
-        gradient.addColorStop(0.4, '#FFFACD');
-        gradient.addColorStop(0.6, '#DAA520');
-        gradient.addColorStop(0.8, '#FFD700');
+        gradient.addColorStop(0.3, '#FFD700');
+        gradient.addColorStop(0.5, '#FFFACD'); // Яркий блик в центре
+        gradient.addColorStop(0.7, '#FFD700');
         gradient.addColorStop(1,   '#B8860B');
 
         overlayCtx.fillStyle = gradient;
-        overlayCtx.fillRect(
-            bar.x - bar.width / 2, bar.y,
-            bar.width, bar.base - bar.y
-        );
+        overlayCtx.fillRect(barX, barY, barW, barH);
     });
 
     setTimeout(() => requestAnimationFrame(animateGoldenShimmer), 50);
