@@ -20,7 +20,8 @@
 
 ## 🖼️ Dashboard Preview
 
-![Dashboard Preview](https://via.placeholder.com/800x400?text=CPU+Load+Charts+with+Thread+Telemetry)
+<img width="1412" height="471" alt="image" src="https://github.com/user-attachments/assets/a4eb17e4-f4b4-4314-9204-bcb743b5c9d5" />
+
 
 *The dashboard features real-time CPU load graphs, free disk space monitoring, and an eye-catching uptime bar chart with logarithmic scale.*
 
