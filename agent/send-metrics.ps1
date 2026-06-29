@@ -1,9 +1,17 @@
-# send-metrics.ps1
-# ver. 4
-# 08-IV-2026
+﻿# send-metrics.ps1
+# ver. 4.6
+# 29-V-2026
+
+# 🔝 В начало скрипта
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "[!] Требуются права администратора. Перезапуск..." -ForegroundColor Yellow
+    Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
+
 
 $vm_id              = "VM-209-01"       
-$vm_profile         = "Tower"      
+$vm_profile         = "TowerDE"      
 $vm_threads         = "6"          
 $vm_bas_version     = "29.3.1"       
 $vm_project_version = "7.3"      
@@ -13,7 +21,7 @@ $server_ip = "47.82.5.187"
 $api_endpoint = "http://$server_ip`:8080/metrics"
 
 
-Write-Host "`n[+] Сбор метрик: ver. 4" -ForegroundColor Magenta
+Write-Host "`n[=] Сбор метрик: ver. 4.6" -ForegroundColor Magenta
 Write-Host "`n[+] Сбор метрик для ВМ:" -ForegroundColor Cyan
 Write-Host "    ID:      $vm_id" -ForegroundColor White
 Write-Host "    Profile: $vm_profile" -ForegroundColor White
@@ -23,43 +31,64 @@ Write-Host "    Project Version: $vm_project_version" -ForegroundColor Gray
 
 # 1. Сбор метрик
 try {
-    $cpu = (Get-WmiObject Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+    $cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
     if ($null -eq $cpu) { $cpu = 0 }
     
-    $diskObj = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
+    $diskObj = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
     $disk_free = if ($diskObj) { $diskObj.FreeSpace } else { 0 }
 
-    # 🆕 Расчет uptime (в секундах)
+    # Расчет uptime
     $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
     $uptime_seconds = [math]::Round(((Get-Date) - $osInfo.LastBootUpTime).TotalSeconds)
 
+    # 🔍 ПРОВЕРКА BAS - ИСПРАВЛЕННАЯ ВЕРСИЯ
+    Write-Host "`n[🔍] Проверка состояния BAS..." -ForegroundColor Cyan
+    
     $basProc = Get-Process -Name "BrowserAutomationStudio" -ErrorAction SilentlyContinue
+    
     if ($basProc) {
-        $basId = $basProc.Id
-        $childChromiums = Get-CimInstance Win32_Process -Filter "ParentProcessId = $basId AND Name LIKE 'Chromium%'"
-        $bas_running = $childChromiums.Count -gt 0
-        $bas_title = if ($bas_running) {
-            "BAS working with $($childChromiums.Count) Chromium processes"
-        } else {
-            "BAS running (idle or in tray)"
+        Write-Host "  ✓ BAS найден (PID: $($basProc.Id))" -ForegroundColor Green
+        
+        # Ищем ВСЕ Chromium процессы (не только дочерние!)
+        $allChromiums = Get-Process | Where-Object { 
+            $_.ProcessName -match "^(chromium|chrome)$" 
         }
+        
+        # BAS использует Worker.exe для потоков
+        $workerProcs = Get-Process -Name "worker" -ErrorAction SilentlyContinue
+        
+        $real_threads = @($allChromiums).Count
+        $bas_running = $true
+        
+        Write-Host "  → Chromium процессов: $real_threads" -ForegroundColor Gray
+        Write-Host "  → Worker процессов: $(@($workerProcs).Count)" -ForegroundColor Gray
+        
+        $bas_title = if ($real_threads -gt 0) {
+            "BAS working with $real_threads Chromium instances"
+        } else {
+            "BAS running (idle)"
+        }
+        
     } else {
+        Write-Host "  ✗ BAS НЕ найден!" -ForegroundColor Red
         $bas_running = $false
         $bas_title = "BAS not running :("
+        $real_threads = 0
     }
 
-    $real_threads = if ($bas_running) { $childChromiums.Count } else { 0 }
+    # Предупреждение о несоответствии потоков
     if ([int]$vm_threads -ne $real_threads) {
-        Write-Host "[!] ВНИМАНИЕ: Заявленное количество потоков ($vm_threads) не совпадает с реальным ($real_threads)!" -ForegroundColor Yellow
+        Write-Host "`n[!] ВНИМАНИЕ: Заявлено потоков: $vm_threads, реально: $real_threads" -ForegroundColor Yellow
     }
 
+    # Вывод метрик
     Write-Host "`n[@] Основные метрики:" -ForegroundColor Green
     Write-Host "    CPU Load:     $cpu%" -ForegroundColor Yellow
     Write-Host "    Disk Free:    $([math]::Round($disk_free / 1GB, 2)) GB" -ForegroundColor Gray
-    Write-Host "    Uptime:       $([math]::Round($uptime_seconds/3600, 1)) ч" -ForegroundColor Cyan  # 🆕
+    Write-Host "    Uptime:       $([math]::Round($uptime_seconds/3600, 1)) ч" -ForegroundColor Cyan
     Write-Host "    BAS Running:  $bas_running" -ForegroundColor $(if ($bas_running) { "Green" } else { "Red" })
+    Write-Host "    Status:       $bas_title" -ForegroundColor Gray
     if ($bas_running) {
-        Write-Host "    Window Title: '$bas_title'" -ForegroundColor Gray
         Write-Host "    Real Threads: $real_threads" -ForegroundColor Gray
     }
 } catch {
@@ -67,6 +96,7 @@ try {
     Start-Sleep -Seconds 15
     exit 1
 }
+
 
 # 2. Анализ логов BAS
 $log_path = "C:\tmp\success.log"
@@ -136,5 +166,30 @@ try {
     }
 }
 
-Write-Host "`n[=] Скрипт завершён.`n" -ForegroundColor Magenta
+Write-Host "`n[=] Скрипт почти завершён....`n" -ForegroundColor Magenta
+Start-Sleep -Seconds 1
+
+
+
+# ----------------------------------
+
+
+# $folder = "C:\Program Files\BrowserAutomationStudio\apps\29.3.1\prof"
+# ✅ Стало изящно
+$folder = "C:\Program Files\BrowserAutomationStudio\apps\$vm_bas_version\prof"
+
+#Write-Host "Очистка папки: $folder" -ForegroundColor Yellow
+#Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue
+#Write-Host "Создание папки заново..." -ForegroundColor Yellow
+#New-Item -ItemType Directory -Path $folder -Force | Out-Null
+
+# ✅ Очищаем только содержимое, папка остаётся
+
+Write-Host "Очистка содержимого: $folder" -ForegroundColor Yellow
+Get-ChildItem -Path $folder -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host "Готово!" -ForegroundColor Green
+Write-Host "`n[=] Скрипт ПОЛНОСТЬЮ завершён....`n" -ForegroundColor Magenta
+
+Start-Sleep -Seconds 5
 Start-Sleep -Seconds 1
